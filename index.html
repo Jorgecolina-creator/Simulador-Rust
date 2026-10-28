@@ -1,0 +1,951 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulador Interactivo: Servidor Web Concurrente en Rust</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        rust: {
+                            50: '#fff8f5',
+                            100: '#feece5',
+                            500: '#e44d26',
+                            600: '#d03813',
+                            700: '#b22b0c',
+                            800: '#8f240d',
+                            900: '#74220f',
+                        },
+                        navy: {
+                            800: '#0f172a',
+                            900: '#020617',
+                            950: '#010409',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['Fira Code', 'Consolas', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #020617;
+            color: #e2e8f0;
+        }
+        pre, code {
+            font-family: 'Fira Code', monospace;
+        }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f172a;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569;
+        }
+        .code-line {
+            display: block;
+            padding: 0.1rem 0.5rem;
+            border-left: 3px solid transparent;
+            transition: all 0.2s ease;
+        }
+        .code-line.active {
+            background-color: rgba(228, 77, 38, 0.2);
+            border-left-color: #e44d26;
+            font-weight: 600;
+        }
+        .thread-pulse {
+            animation: pulse-ring 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+        }
+        @keyframes pulse-ring {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(228, 77, 38, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(228, 77, 38, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(228, 77, 38, 0); }
+        }
+    </style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden bg-slate-950 text-slate-100">
+
+    <!-- HEADER / NAVBAR -->
+    <header class="bg-slate-900 border-b border-slate-800 px-6 py-3 flex items-center justify-between shrink-0 shadow-md">
+        <div class="flex items-center space-x-3">
+            <div class="bg-rust-600 text-white p-2 rounded-lg shadow-lg flex items-center justify-center">
+                <i class="fa-solid fa-server text-xl"></i>
+            </div>
+            <div>
+                <h1 class="text-lg font-bold text-white tracking-wide flex items-center gap-2">
+                    Simulador Interactivo: Servidor Web Concurrente en Rust
+                    <span class="text-xs bg-rust-500/20 text-rust-400 border border-rust-500/30 px-2 py-0.5 rounded-full font-mono">Profesor Jorge</span>
+                </h1>
+                <p class="text-xs text-slate-400">Aprende concurrencia, networking y memoria segura paso a paso</p>
+            </div>
+        </div>
+
+        <!-- Simulator Progress & Quick Controls -->
+        <div class="flex items-center space-x-4">
+            <div class="text-right hidden md:block">
+                <div class="text-xs text-slate-400 font-medium">Progreso de la lección</div>
+                <div class="text-sm font-bold text-rust-400 font-mono" id="progress-text">Paso 1 de 20</div>
+            </div>
+            <div class="w-32 bg-slate-800 h-2 rounded-full overflow-hidden hidden md:block">
+                <div id="progress-bar" class="bg-rust-500 h-full transition-all duration-300" style="width: 5%;"></div>
+            </div>
+            <button id="btn-glossary" onclick="openGlossaryModal()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-3 py-2 rounded-lg border border-slate-700 transition flex items-center gap-2">
+                <i class="fa-solid fa-book-open text-rust-400"></i> Glosario de Rust
+            </button>
+        </div>
+    </header>
+
+    <!-- MAIN CONTAINER -->
+    <div class="flex-1 flex flex-col md:flex-row overflow-hidden relative">
+
+        <!-- LEFT PANEL: CODE VIEWER & CONTROLS -->
+        <div class="w-full md:w-1/2 flex flex-col border-r border-slate-800 bg-slate-900/50">
+            
+            <!-- File Selector Tabs -->
+            <div class="flex items-center bg-slate-900 border-b border-slate-800 px-2 overflow-x-auto shrink-0">
+                <button onclick="switchTab('lib')" id="tab-lib" class="px-4 py-2 text-xs font-mono font-medium border-b-2 border-rust-500 text-rust-400 flex items-center gap-2">
+                    <i class="fa-regular fa-file-code"></i> src/lib.rs
+                </button>
+                <button onclick="switchTab('main')" id="tab-main" class="px-4 py-2 text-xs font-mono font-medium border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2">
+                    <i class="fa-regular fa-file-code"></i> src/main.rs
+                </button>
+                <button onclick="switchTab('cargo')" id="tab-cargo" class="px-4 py-2 text-xs font-mono font-medium border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2">
+                    <i class="fa-solid fa-gear"></i> Cargo.toml
+                </button>
+            </div>
+
+            <!-- Code Editor Box -->
+            <div class="flex-1 overflow-y-auto p-4 bg-slate-950 font-mono text-xs leading-relaxed relative" id="code-container">
+                <!-- Lines render dynamically via JS -->
+                <div id="code-content" class="space-y-0.5"></div>
+            </div>
+
+            <!-- SIMULATOR CONTROL BAR -->
+            <div class="p-4 bg-slate-900 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0 shadow-lg">
+                <div class="flex items-center space-x-2 w-full sm:w-auto justify-center">
+                    <button onclick="prevStep()" id="btn-prev" class="bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:hover:bg-slate-800 text-slate-200 px-3 py-2 rounded-lg text-xs font-medium border border-slate-700 transition flex items-center gap-1.5">
+                        <i class="fa-solid fa-chevron-left"></i> Anterior
+                    </button>
+                    <button onclick="toggleAutoplay()" id="btn-play" class="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-2 rounded-lg text-xs font-medium border border-slate-700 transition flex items-center gap-1.5 min-w-[90px] justify-center">
+                        <i class="fa-solid fa-play text-rust-400" id="play-icon"></i> <span id="play-text">Auto</span>
+                    </button>
+                    <button onclick="nextStep()" id="btn-next" class="bg-rust-600 hover:bg-rust-500 text-white px-4 py-2 rounded-lg text-xs font-semibold shadow-md shadow-rust-600/30 transition flex items-center gap-1.5">
+                        Siguiente <i class="fa-solid fa-chevron-right"></i>
+                    </button>
+                    <button onclick="resetSimulation()" class="bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 px-3 py-2 rounded-lg text-xs border border-slate-700 transition" title="Reiniciar">
+                        <i class="fa-solid fa-rotate-right"></i>
+                    </button>
+                </div>
+                <div class="text-xs text-slate-400 font-mono flex items-center gap-2">
+                    <span class="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span>Línea activa: <strong class="text-rust-400" id="active-line-num">Line --</strong></span>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- RIGHT PANEL: TEACHER EXPLANATION & VIRTUAL ENVIRONMENT -->
+        <div class="w-full md:w-1/2 flex flex-col overflow-y-auto bg-slate-950 p-4 space-y-4">
+            
+            <!-- TEACHER CARD / EXPLANATION -->
+            <div class="bg-slate-900/90 border border-rust-500/30 rounded-xl p-4 shadow-xl relative overflow-hidden">
+                <div class="absolute top-0 right-0 w-24 h-24 bg-rust-500/5 rounded-full blur-2xl pointer-events-none"></div>
+                
+                <div class="flex items-start gap-3">
+                    <div class="w-10 h-10 rounded-full bg-rust-600/20 border border-rust-500/40 flex items-center justify-center shrink-0 text-rust-400 text-lg shadow-inner">
+                        <i class="fa-solid fa-chalkboard-user"></i>
+                    </div>
+                    <div class="flex-1">
+                        <div class="flex items-center justify-between">
+                            <h2 class="text-sm font-bold text-rust-400 tracking-wide uppercase font-mono" id="step-title">1. Configuración de Dependencias</h2>
+                            <span class="text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded border border-slate-700 font-mono" id="step-badge">Cargo.toml</span>
+                        </div>
+                        <p class="text-xs text-slate-300 mt-2 leading-relaxed" id="teacher-text">
+                            ¡Hola Jorge! Bienvenido a este tutorial paso a paso. Para comenzar a construir nuestro Servidor Web Concurrente en Rust, primero configuramos nuestro archivo <code>Cargo.toml</code>. Aquí agregamos la dependencia <code>mime_guess</code>, la cual nos permitirá identificar automáticamente si un archivo es HTML, CSS, una imagen o texto plano basándonos en su extensión.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Syntax / Concept Breakdown Box -->
+                <div class="mt-3 bg-slate-950/80 rounded-lg p-3 border border-slate-800 text-xs" id="syntax-box">
+                    <div class="font-semibold text-slate-300 mb-1 flex items-center gap-1.5">
+                        <i class="fa-solid fa-code text-rust-400"></i> Desglose de Sintaxis y Conceptos:
+                    </div>
+                    <div class="text-slate-400 leading-relaxed font-mono text-[11px]" id="syntax-text">
+                        <code>[dependencies] mime_guess = "2.0"</code> -> Le indica a Cargo que descargue e integre la librería externa para adivinar tipos MIME.
+                    </div>
+                </div>
+            </div>
+
+            <!-- VIRTUAL SYSTEM STATE PANEL (TERMINAL, BROWSER, THREAD POOL) -->
+            <div class="grid grid-cols-1 gap-4 flex-1">
+                
+                <!-- THREAD POOL VISUALIZER -->
+                <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-md">
+                    <div class="flex items-center justify-between border-b border-slate-800 pb-2 mb-3">
+                        <span class="text-xs font-bold text-slate-300 flex items-center gap-2">
+                            <i class="fa-solid fa-microchip text-rust-400"></i> Estado del Pool de Hilos (ThreadPool)
+                        </span>
+                        <span class="text-[10px] text-slate-400 font-mono" id="threads-count">4 Hilos Trabajadores</span>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2" id="threads-container">
+                        <!-- Rendered dynamically -->
+                    </div>
+                </div>
+
+                <!-- SIMULATED UBUNTU TERMINAL -->
+                <div class="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden shadow-md flex flex-col font-mono text-xs">
+                    <div class="bg-slate-900 px-3 py-1.5 border-b border-slate-800 flex items-center justify-between text-slate-400 text-[11px]">
+                        <div class="flex items-center space-x-1.5">
+                            <span class="w-2.5 h-2.5 rounded-full bg-red-500 inline-block"></span>
+                            <span class="w-2.5 h-2.5 rounded-full bg-yellow-500 inline-block"></span>
+                            <span class="w-2.5 h-2.5 rounded-full bg-green-500 inline-block"></span>
+                            <span class="ml-2 font-sans font-medium text-slate-300">vboxuser@Ubuntu: ~/static_web_server</span>
+                        </div>
+                        <span>Bash</span>
+                    </div>
+                    <div class="p-3 space-y-1 overflow-y-auto h-28 text-slate-300" id="terminal-content">
+                        <div class="text-slate-500">vboxuser@Ubuntu:~/static_web_server$ _</div>
+                    </div>
+                </div>
+
+                <!-- SIMULATED BROWSER (FIREFOX) -->
+                <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-md flex flex-col">
+                    <!-- Browser Bar -->
+                    <div class="bg-slate-800 px-3 py-2 border-b border-slate-700 flex items-center space-x-2">
+                        <div class="flex items-center space-x-1 text-slate-400 text-xs">
+                            <i class="fa-solid fa-arrow-left"></i>
+                            <i class="fa-solid fa-arrow-right"></i>
+                            <i class="fa-solid fa-rotate-right ml-1"></i>
+                        </div>
+                        <div class="flex-1 bg-slate-950 px-3 py-1 rounded border border-slate-700 font-mono text-xs text-slate-300 flex items-center justify-between">
+                            <span id="browser-url" class="truncate">about:blank</span>
+                            <i class="fa-solid fa-lock text-emerald-400 text-[10px]"></i>
+                        </div>
+                    </div>
+
+                    <!-- Browser Canvas/Content -->
+                    <div class="p-4 bg-slate-950 h-32 flex items-center justify-center text-center overflow-auto" id="browser-viewport">
+                        <span class="text-xs text-slate-600 font-sans">Navegador Firefox en espera de peticiones...</span>
+                    </div>
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <!-- GLOSSARY MODAL -->
+    <div id="glossary-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 hidden">
+        <div class="bg-slate-900 border border-slate-800 rounded-xl max-w-2xl w-full p-6 shadow-2xl relative max-h-[85vh] flex flex-col">
+            <button onclick="closeGlossaryModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white text-lg">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+            <h2 class="text-lg font-bold text-rust-400 mb-1 flex items-center gap-2">
+                <i class="fa-solid fa-book-bookmark"></i> Glosario Clave de Rust y Redes
+            </h2>
+            <p class="text-xs text-slate-400 mb-4">Conceptos fundamentales utilizados en este proyecto explicados amigablemente</p>
+
+            <div class="space-y-3 overflow-y-auto pr-2 text-xs leading-relaxed flex-1">
+                <div class="bg-slate-950 p-3 rounded-lg border border-slate-800">
+                    <h3 class="font-bold text-rust-400 font-mono">Arc&lt;T&gt; (Atomically Reference Counted)</h3>
+                    <p class="text-slate-300 mt-1">Puntero de conteo de referencias atómico. Permite compartir la propiedad de un valor entre múltiples hilos de forma segura sin provocar carreras de datos (data races).</p>
+                </div>
+                <div class="bg-slate-950 p-3 rounded-lg border border-slate-800">
+                    <h3 class="font-bold text-rust-400 font-mono">Mutex&lt;T&gt; (Mutual Exclusion)</h3>
+                    <p class="text-slate-300 mt-1">Garantiza exclusión mutua. Solo un hilo a la vez puede acceder a los datos internos envueltos por el Mutex pidiendo un "candado" (lock).</p>
+                </div>
+                <div class="bg-slate-950 p-3 rounded-lg border border-slate-800">
+                    <h3 class="font-bold text-rust-400 font-mono">mpsc::channel() (Multi-Producer, Single-Consumer)</h3>
+                    <p class="text-slate-300 mt-1">Canal de comunicación donde varios transmisores (`Sender`) envían tareas y un único receptor (`Receiver`) las procesa en cola FIFO.</p>
+                </div>
+                <div class="bg-slate-950 p-3 rounded-lg border border-slate-800">
+                    <h3 class="font-bold text-rust-400 font-mono">TcpListener & TcpStream</h3>
+                    <p class="text-slate-300 mt-1">Componentes de red de la librería estándar de Rust (`std::net`). `TcpListener` escucha en la IP y puerto especificados, mientras que `TcpStream` representa la conexión cliente-servidor abierta.</p>
+                </div>
+                <div class="bg-slate-950 p-3 rounded-lg border border-slate-800">
+                    <h3 class="font-bold text-rust-400 font-mono">Directory Traversal Attack</h3>
+                    <p class="text-slate-300 mt-1">Vulnerabilidad donde un atacante solicita rutas con `../` para intentar acceder a archivos confidenciales del sistema operativo. Se soluciona verificando que la ruta resultante comience con el directorio estático autorizado (`starts_with`).</p>
+                </div>
+            </div>
+            
+            <div class="mt-4 pt-3 border-t border-slate-800 text-right">
+                <button onclick="closeGlossaryModal()" class="bg-rust-600 hover:bg-rust-500 text-white px-4 py-1.5 rounded-lg text-xs font-semibold">
+                    Entendido
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- JAVASCRIPT LOGIC -->
+    <script>
+        // --- CODE FILES DEFINITION ---
+        const codeFiles = {
+            cargo: `[package]
+name = "static_web_server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mime_guess = "2.0"`,
+
+            main: `use static_web_server::WebServer;
+
+fn main() {
+    // Inicializamos el servidor web en IP 127.0.0.1 y puerto 7878
+    let server = WebServer::new("127.0.0.1:7878", "./static_files").unwrap();
+    
+    println!("Iniciando servidor de archivos estáticos...");
+    
+    // Ponemos a correr el servidor en bucle
+    if let Err(e) = server.run() {
+        eprintln!("Error en el servidor: {}", e);
+    }
+}`,
+
+            lib: `use mime_guess::from_path;
+use std::fs;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::path::{Path, PathBuf};
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread;
+
+pub struct ThreadPool {
+    workers: Vec<Worker>,
+    sender: mpsc::Sender<Job>,
+}
+
+type Job = Box<dyn FnOnce() + Send + 'static>;
+
+impl ThreadPool {
+    pub fn new(size: usize) -> ThreadPool {
+        assert!(size > 0);
+        let (sender, receiver) = mpsc::channel();
+        let receiver = Arc::new(Mutex::new(receiver));
+
+        let mut workers = Vec::with_capacity(size);
+        for id in 0..size {
+            workers.push(Worker::new(id, Arc::clone(&receiver)));
+        }
+
+        ThreadPool { workers, sender }
+    }
+
+    pub fn execute<F>(&self, f: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let job = Box::new(f);
+        self.sender.send(job).unwrap();
+    }
+}
+
+struct Worker {
+    id: usize,
+    thread: thread::JoinHandle<()>,
+}
+
+impl Worker {
+    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Worker {
+        let thread = thread::spawn(move || loop {
+            let job = receiver.lock().unwrap().recv();
+            match job {
+                Ok(job) => job(),
+                Err(_) => break,
+            }
+        });
+
+        Worker { id, thread }
+    }
+}
+
+pub struct WebServer {
+    addr: String,
+    static_dir: PathBuf,
+}
+
+impl WebServer {
+    pub fn new<P: AsRef<Path>>(addr: &str, static_dir: P) -> Result<Self, std::io::Error> {
+        let path = static_dir.as_ref().to_path_buf();
+        if !path.exists() {
+            fs::create_dir_all(&path)?;
+        }
+        Ok(WebServer {
+            addr: addr.to_string(),
+            static_dir: path,
+        })
+    }
+
+    pub fn run(&self) -> Result<(), std::io::Error> {
+        let listener = TcpListener::bind(&self.addr)?;
+        println!("Servidor escuchando en http://{}", self.addr);
+
+        let pool = ThreadPool::new(4);
+
+        for stream in listener.incoming() {
+            match stream {
+                Ok(stream) => {
+                    let static_dir = self.static_dir.clone();
+                    pool.execute(move || {
+                        Self::handle_connection(stream, &static_dir);
+                    });
+                }
+                Err(e) => {
+                    eprintln!("Error al aceptar conexión: {}", e);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn handle_connection(mut stream: TcpStream, static_dir: &Path) {
+        let mut buffer = [0; 1024];
+        if let Err(e) = stream.read(&mut buffer) {
+            eprintln!("Error de lectura: {}", e);
+            return;
+        }
+
+        let request = String::from_utf8_lossy(&buffer[..]);
+        let first_line = match request.lines().next() {
+            Some(line) => line,
+            None => return,
+        };
+
+        let parts: Vec<&str> = first_line.split_whitespace().collect();
+        if parts.len() < 2 || parts[0] != "GET" {
+            return;
+        }
+
+        let raw_path = parts[1];
+        let rel_path = if raw_path == "/" { "/index.html" } else { raw_path };
+        let safe_path = rel_path.trim_start_matches('/');
+        let file_path = static_dir.join(safe_path);
+
+        if !file_path.starts_with(static_dir) {
+            Self::send_response(&mut stream, "403 FORBIDDEN", "text/plain", b"403 Access Denied");
+            return;
+        }
+
+        if file_path.exists() && file_path.is_file() {
+            match fs::read(&file_path) {
+                Ok(content) => {
+                    let mime_type = from_path(&file_path).first_or_octet_stream().to_string();
+                    Self::send_response(&mut stream, "200 OK", &mime_type, &content);
+                }
+                Err(_) => {
+                    Self::send_response(&mut stream, "500 INTERNAL SERVER ERROR", "text/plain", b"500 Internal Error");
+                }
+            }
+        } else {
+            Self::send_response(&mut stream, "404 NOT FOUND", "text/html", b"<h1>404 Not Found</h1>");
+        }
+    }
+
+    fn send_response(stream: &mut TcpStream, status: &str, content_type: &str, body: &[u8]) {
+        let response_headers = format!(
+            "HTTP/1.1 {}\\r\\nContent-Length: {}\\r\\nContent-Type: {}\\r\\n\\r\\n",
+            status,
+            body.len(),
+            content_type
+        );
+        let _ = stream.write_all(response_headers.as_bytes());
+        let _ = stream.write_all(body);
+        let _ = stream.flush();
+    }
+}`
+        };
+
+        // --- SIMULATION STEPS DATA ---
+        const steps = [
+            {
+                file: 'cargo',
+                line: 7,
+                title: '1. Dependencias en Cargo.toml',
+                badge: 'Cargo.toml',
+                teacher: '¡Hola Jorge! Para comenzar, declaramos la librería externa `mime_guess = "2.0"` en el archivo Cargo.toml. Esto le dice a Cargo que descargue este paquete, el cual nos servirá para inferir automáticamente el tipo MIME de los archivos (ej. saber que .html es text/html).',
+                syntax: '<code>[dependencies]</code> sección donde registramos crates de crates.io.',
+                terminal: 'vboxuser@Ubuntu:~/static_web_server$ cargo build\n   Compiling mime_guess v2.0.5...',
+                browserUrl: 'about:blank',
+                browserContent: '<span class="text-xs text-slate-500">Navegador Firefox en espera...</span>',
+                threads: ['Idle', 'Idle', 'Idle', 'Idle'],
+                activeThread: null
+            },
+            {
+                file: 'main',
+                line: 5,
+                title: '2. Inicialización de WebServer',
+                badge: 'src/main.rs',
+                teacher: 'En main.rs, llamamos a `WebServer::new("127.0.0.1:7878", "./static_files")`. Le pasamos la dirección IP local con el puerto 7878 y la ruta del directorio donde guardaremos las páginas web.',
+                syntax: '<code>WebServer::new(...)</code> -> Método constructor estático que devuelve Result<WebServer, std::io::Error>.',
+                terminal: 'vboxuser@Ubuntu:~/static_web_server$ cargo run\n   Compiling static_web_server v0.1.0...',
+                browserUrl: 'about:blank',
+                browserContent: '<span class="text-xs text-slate-500">Navegador Firefox en espera...</span>',
+                threads: ['Idle', 'Idle', 'Idle', 'Idle'],
+                activeThread: null
+            },
+            {
+                file: 'lib',
+                line: 60,
+                title: '3. Método WebServer::new y PathBuf',
+                badge: 'src/lib.rs',
+                teacher: 'En lib.rs, `WebServer::new` convierte la ruta recibida en un `PathBuf`. Además, verifica con `!path.exists()` si el directorio existe; si no existe, lo crea automáticamente usando `fs::create_dir_all`.',
+                syntax: '<code>PathBuf</code> -> Tipo de dato de Rust que representa una ruta de sistema de archivos modificable y segura.',
+                terminal: 'Verificando/Creando carpeta ./static_files...',
+                browserUrl: 'about:blank',
+                browserContent: '<span class="text-xs text-slate-500">Navegador Firefox en espera...</span>',
+                threads: ['Idle', 'Idle', 'Idle', 'Idle'],
+                activeThread: null
+            },
+            {
+                file: 'main',
+                line: 10,
+                title: '4. Iniciar Escucha del Servidor (run)',
+                badge: 'src/main.rs',
+                teacher: 'Ahora en main.rs llamamos a `server.run()`. Este método iniciará la escucha TCP y mantendrá el servidor en ejecución constante.',
+                syntax: '<code>if let Err(e) = server.run()</code> -> Captura idiomática de errores en Rust usando Pattern Matching.',
+                terminal: 'Iniciando servidor de archivos estáticos...',
+                browserUrl: 'about:blank',
+                browserContent: '<span class="text-xs text-slate-500">Navegador Firefox en espera...</span>',
+                threads: ['Idle', 'Idle', 'Idle', 'Idle'],
+                activeThread: null
+            },
+            {
+                file: 'lib',
+                line: 70,
+                title: '5. Binding del Socket TCP',
+                badge: 'src/lib.rs',
+                teacher: 'Dentro de `run()`, ejecutamos `TcpListener::bind(&self.addr)?`. El sistema operativo reserva la IP 127.0.0.1 y el puerto 7878 para nuestro programa.',
+                syntax: '<code>TcpListener::bind(...)</code> -> Intenta abrir un socket TCP. El operador `?` retorna el error inmediatamente si el puerto está ocupado.',
+                terminal: 'Servidor escuchando en http://127.0.0.1:7878',
+                browserUrl: 'about:blank',
+                browserContent: '<span class="text-xs text-slate-500">Servidor listo para recibir tráfico en puerto 7878</span>',
+                threads: ['Idle', 'Idle', 'Idle', 'Idle'],
+                activeThread: null
+            },
+            {
+                file: 'lib',
+                line: 73,
+                title: '6. Creación del ThreadPool (4 Hilos)',
+                badge: 'src/lib.rs',
+                teacher: 'Inicializamos un `ThreadPool::new(4)`. En lugar de crear un hilo nuevo por cada petición cliente (lo que saturaría la CPU bajo estrés), creamos 4 hilos persistentes que reutilizaremos.',
+                syntax: '<code>ThreadPool::new(4)</code> -> Asigna memoria para 4 Workers que procesarán tareas de una cola común.',
+                terminal: 'Servidor escuchando en http://127.0.0.1:7878\n[INFO] ThreadPool inicializado con 4 workers.',
+                browserUrl: 'about:blank',
+                browserContent: '<span class="text-xs text-slate-500">ThreadPool listo (4 Workers creados)</span>',
+                threads: ['Esperando tarea', 'Esperando tarea', 'Esperando tarea', 'Esperando tarea'],
+                activeThread: null
+            },
+            {
+                file: 'lib',
+                line: 19,
+                title: '7. Canal MPSC y Arc<Mutex<Receiver>>',
+                badge: 'src/lib.rs',
+                teacher: 'Observa la magia de Rust: Se crea un canal MPSC `mpsc::channel()`. Para compartir el `receiver` de la cola entre los 4 hilos de forma segura, se envuelve en `Arc<Mutex<...>>`. `Arc` permite múltiples dueños y `Mutex` garantiza que solo un hilo tome una tarea a la vez.',
+                syntax: '<code>Arc::new(Mutex::new(receiver))</code> -> Concurrencia segura garantizada por el compilador sin data races.',
+                terminal: 'Canal MPSC establecido de forma segura.',
+                browserUrl: 'about:blank',
+                browserContent: '<span class="text-xs text-slate-500">Concurrencia segura configurada</span>',
+                threads: ['Esperando tarea', 'Esperando tarea', 'Esperando tarea', 'Esperando tarea'],
+                activeThread: null
+            },
+            {
+                file: 'lib',
+                line: 45,
+                title: '8. Spawneo de Workers y Bucle de Escucha',
+                badge: 'src/lib.rs',
+                teacher: 'Cada Worker crea un hilo con `thread::spawn`. Dentro, ejecutan un bucle `loop` donde intentan tomar el candado del Mutex con `receiver.lock().unwrap().recv()`. Quedan en reposo esperando que llegue trabajo por el canal.',
+                syntax: '<code>receiver.lock().unwrap().recv()</code> -> Bloquea el hilo suavemente hasta que haya un trabajo en la cola.',
+                terminal: 'Worker 0 iniciado.\nWorker 1 iniciado.\nWorker 2 iniciado.\nWorker 3 iniciado.',
+                browserUrl: 'about:blank',
+                browserContent: '<span class="text-xs text-slate-500">Hilos listos en segundo plano</span>',
+                threads: ['Bloqueado en Mutex (Ready)', 'Bloqueado en Mutex (Ready)', 'Bloqueado en Mutex (Ready)', 'Bloqueado en Mutex (Ready)'],
+                activeThread: null
+            },
+            {
+                file: 'lib',
+                line: 75,
+                title: '9. Petición Cliente en Navegador',
+                badge: 'Navegador Firefox',
+                teacher: 'El cliente abre Firefox y visita `http://127.0.0.1:7878/`. El navegador establece un saludo de manos TCP (TCP Handshake) hacia nuestro servidor.',
+                syntax: 'Petición HTTP GET entrante por la interfaz Loopback (127.0.0.1).',
+                terminal: 'Conexión TCP entrante detectada...',
+                browserUrl: 'http://127.0.0.1:7878/',
+                browserContent: '<div class="text-rust-400 font-mono text-xs animate-pulse"><i class="fa-solid fa-spinner fa-spin"></i> Cargando respuesta del servidor...</div>',
+                threads: ['Bloqueado en Mutex', 'Bloqueado en Mutex', 'Bloqueado en Mutex', 'Bloqueado en Mutex'],
+                activeThread: null
+            },
+            {
+                file: 'lib',
+                line: 76,
+                title: '10. Aceptación del Socket (listener.incoming)',
+                badge: 'src/lib.rs',
+                teacher: 'El bucle `for stream in listener.incoming()` en el hilo principal despierta y recibe el `TcpStream` en la variable `stream`.',
+                syntax: '<code>listener.incoming()</code> -> Iterador infinito que devuelve Ok(TcpStream) cada vez que un cliente se conecta.',
+                terminal: 'Nueva conexión TCP recibida con éxito.',
+                browserUrl: 'http://127.0.0.1:7878/',
+                browserContent: '<div class="text-rust-400 font-mono text-xs"><i class="fa-solid fa-spinner fa-spin"></i> Conexión aceptada por Hilo Principal...</div>',
+                threads: ['Bloqueado en Mutex', 'Bloqueado en Mutex', 'Bloqueado en Mutex', 'Bloqueado en Mutex'],
+                activeThread: null
+            },
+            {
+                file: 'lib',
+                line: 79,
+                title: '11. Envío de Tarea mediante pool.execute',
+                badge: 'src/lib.rs',
+                teacher: 'El hilo principal no procesa la petición directamente. En su lugar, empaqueta la tarea en una clausura (Closure) y la transmite al canal usando `pool.execute(...)`. El hilo principal queda libre de inmediato para recibir la siguiente conexión.',
+                syntax: '<code>pool.execute(move || { ... })</code> -> La palabra clave `move` transfiere la propiedad del stream al hilo trabajador.',
+                terminal: 'Tarea enviada al canal MPSC por el Hilo Principal.',
+                browserUrl: 'http://127.0.0.1:7878/',
+                browserContent: '<div class="text-rust-400 font-mono text-xs"><i class="fa-solid fa-spinner fa-spin"></i> Tarea en cola MPSC...</div>',
+                threads: ['Bloqueado en Mutex', 'Procesando Tarea', 'Bloqueado en Mutex', 'Bloqueado en Mutex'],
+                activeThread: 1
+            },
+            {
+                file: 'lib',
+                line: 46,
+                title: '12. Worker 1 toma el candado y recibe el Job',
+                badge: 'src/lib.rs',
+                teacher: 'El Worker 1 obtiene el candado del `Mutex` que protegía al receptor, extrae el `Job` de la cola y libera el candado para que otros Workers puedan recibir más peticiones.',
+                syntax: '<code>job()</code> -> Ejecuta la función/closure recibida.',
+                terminal: '[Worker 1] Tomó la petición de la cola.',
+                browserUrl: 'http://127.0.0.1:7878/',
+                browserContent: '<div class="text-rust-400 font-mono text-xs"><i class="fa-solid fa-spinner fa-spin"></i> Worker 1 procesando...</div>',
+                threads: ['Bloqueado en Mutex', 'Ejecutando handle_connection', 'Bloqueado en Mutex', 'Bloqueado en Mutex'],
+                activeThread: 1
+            },
+            {
+                file: 'lib',
+                line: 91,
+                title: '13. Lectura de Buffer del Socket TCP',
+                badge: 'src/lib.rs',
+                teacher: 'Worker 1 ejecuta `handle_connection`. Crea un buffer de 1024 bytes (`let mut buffer = [0; 1024];`) y lee los bytes recibidos del navegador mediante `stream.read(&mut buffer)`.',
+                syntax: '<code>stream.read(...)</code> -> Lee los datos HTTP crudos enviados por el navegador.',
+                terminal: '[Worker 1] Leyendo bytes del TCP Stream...',
+                browserUrl: 'http://127.0.0.1:7878/',
+                browserContent: '<div class="text-rust-400 font-mono text-xs"><i class="fa-solid fa-spinner fa-spin"></i> Leyendo petición HTTP...</div>',
+                threads: ['Bloqueado en Mutex', 'Leyendo socket TCP (1024 bytes)', 'Bloqueado en Mutex', 'Bloqueado en Mutex'],
+                activeThread: 1
+            },
+            {
+                file: 'lib',
+                line: 97,
+                title: '14. Parseo de la Petición HTTP GET',
+                badge: 'src/lib.rs',
+                teacher: 'Convertimos los bytes a texto con `String::from_utf8_lossy`. Extraemos la primera línea ("GET / HTTP/1.1"). Si la ruta es "/" la traducimos automáticamente a "/index.html".',
+                syntax: '<code>request.lines().next()</code> -> Obtiene la línea inicial HTTP Request Line.',
+                terminal: '[Worker 1] Petición parseada: GET /index.html',
+                browserUrl: 'http://127.0.0.1:7878/',
+                browserContent: '<div class="text-rust-400 font-mono text-xs"><i class="fa-solid fa-spinner fa-spin"></i> Ruta identificada: /index.html</div>',
+                threads: ['Bloqueado en Mutex', 'Parseando GET /index.html', 'Bloqueado en Mutex', 'Bloqueado en Mutex'],
+                activeThread: 1
+            },
+            {
+                file: 'lib',
+                line: 111,
+                title: '15. Prevención de Directory Traversal Attack',
+                badge: 'src/lib.rs',
+                teacher: '¡Punto crítico de seguridad! Verificamos `file_path.starts_with(static_dir)`. Si un hacker intenta pedir `/../../etc/passwd`, este chequeo detecta que se sale de la carpeta autorizada y devuelve 403 Forbidden.',
+                syntax: '<code>file_path.starts_with(...)</code> -> Valida que la ruta absoluta no escape del directorio base.',
+                terminal: '[Worker 1] Seguridad OK: La ruta permanece dentro de ./static_files',
+                browserUrl: 'http://127.0.0.1:7878/',
+                browserContent: '<div class="text-rust-400 font-mono text-xs"><i class="fa-solid fa-spinner fa-spin"></i> Verificando seguridad de ruta...</div>',
+                threads: ['Bloqueado en Mutex', 'Verificando seguridad de ruta', 'Bloqueado en Mutex', 'Bloqueado en Mutex'],
+                activeThread: 1
+            },
+            {
+                file: 'lib',
+                line: 118,
+                title: '16. Inferencia del Tipo MIME (mime_guess)',
+                badge: 'src/lib.rs',
+                teacher: 'Worker 1 comprueba que el archivo `index.html` existe. Luego usa `mime_guess::from_path(&file_path)` para obtener el tipo "text/html". Así el navegador sabrá renderizar la página adecuadamente.',
+                syntax: '<code>from_path(...).first_or_octet_stream()</code> -> Deduce Content-Type por extensión.',
+                terminal: '[Worker 1] Archivo encontrado. MIME tipo: text/html',
+                browserUrl: 'http://127.0.0.1:7878/',
+                browserContent: '<div class="text-rust-400 font-mono text-xs"><i class="fa-solid fa-spinner fa-spin"></i> Tipo MIME: text/html</div>',
+                threads: ['Bloqueado en Mutex', 'Obteniendo Tipo MIME (text/html)', 'Bloqueado en Mutex', 'Bloqueado en Mutex'],
+                activeThread: 1
+            },
+            {
+                file: 'lib',
+                line: 133,
+                title: '17. Construcción y Envío de Respuesta 200 OK',
+                badge: 'src/lib.rs',
+                teacher: 'Llamamos a `send_response`. Construimos las cabeceras HTTP/1.1 200 OK con Content-Type y Content-Length, escribimos los bytes en el stream TCP (`stream.write_all`) y finalizamos con `stream.flush()`.',
+                syntax: '<code>stream.write_all(...)</code> y <code>stream.flush()</code> -> Envía los bytes al cliente por la red.',
+                terminal: '[Worker 1] Respuesta HTTP 200 OK enviada con éxito.',
+                browserUrl: 'http://127.0.0.1:7878/index.html',
+                browserContent: '<div class="text-rust-400 font-mono text-xs"><i class="fa-solid fa-check"></i> Bytes entregados al socket</div>',
+                threads: ['Bloqueado en Mutex', 'Enviando HTTP 200 OK (flush)', 'Bloqueado en Mutex', 'Bloqueado en Mutex'],
+                activeThread: 1
+            },
+            {
+                file: 'lib',
+                line: 136,
+                title: '18. Renderizado Final en Navegador',
+                badge: 'Navegador Firefox',
+                teacher: 'El navegador Firefox recibe los bytes de red, reconoce las cabeceras `200 OK` y el tipo `text/html`, y renderiza la página web para el usuario. Worker 1 termina la tarea y vuelve al reposo.',
+                syntax: 'Interacción Cliente-Servidor completada exitosamente.',
+                terminal: '[Worker 1] Conexión cerrada. Volviendo al estado de espera en Mutex.',
+                browserUrl: 'http://127.0.0.1:7878/',
+                browserContent: '<div class="bg-slate-900 p-4 rounded border border-rust-500/40 text-center"><h1 class="text-sm font-bold text-rust-400 mb-1">¡Servidor Web en Rust funcionando correctamente!</h1><p class="text-[11px] text-slate-300">Archivo index.html servido por Worker 1</p></div>',
+                threads: ['Bloqueado en Mutex', 'Bloqueado en Mutex (Ready)', 'Bloqueado en Mutex', 'Bloqueado en Mutex'],
+                activeThread: null
+            },
+            {
+                file: 'lib',
+                line: 124,
+                title: '19. Petición a Recurso Inexistente (404)',
+                badge: 'Simulación Petición 2',
+                teacher: 'Ahora supongamos que otro cliente intenta acceder a `http://127.0.0.1:7878/archivo_inexistente.html`. El Worker 2 toma la tarea e inspecciona el sistema de archivos.',
+                syntax: '<code>file_path.exists()</code> retorna `false`.',
+                terminal: 'Nueva petición enviada a Worker 2: GET /archivo_inexistente.html',
+                browserUrl: 'http://127.0.0.1:7878/archivo_inexistente.html',
+                browserContent: '<div class="text-yellow-500 font-mono text-xs animate-pulse"><i class="fa-solid fa-spinner fa-spin"></i> Worker 2 buscando archivo...</div>',
+                threads: ['Bloqueado en Mutex', 'Bloqueado en Mutex', 'Buscando archivo en disco', 'Bloqueado en Mutex'],
+                activeThread: 2
+            },
+            {
+                file: 'lib',
+                line: 125,
+                title: '20. Respuesta HTTP 404 NOT FOUND',
+                badge: 'src/lib.rs',
+                teacher: 'Como el archivo no existe en la carpeta `./static_files`, el servidor cae en el bloque `else` y ejecuta `send_response` con el estado `"404 NOT FOUND"` y cuerpo `<h1>404 Not Found</h1>`. ¡Felicidades Jorge, has dominado el flujo completo de tu servidor web en Rust!',
+                syntax: 'Manejo elegante de errores sin caídas del servidor (Fault Tolerance).',
+                terminal: '[Worker 2] Archivo no encontrado. Respuesta HTTP 404 NOT FOUND enviada.',
+                browserUrl: 'http://127.0.0.1:7878/archivo_inexistente.html',
+                browserContent: '<div class="bg-red-950/40 p-4 rounded border border-red-800 text-center"><h1 class="text-base font-bold text-red-400 mb-1">404 Not Found</h1><p class="text-[11px] text-slate-300">El recurso solicitado no existe en el servidor.</p></div>',
+                threads: ['Bloqueado en Mutex', 'Bloqueado en Mutex', 'Respuesta 404 Enviada -> Reposo', 'Bloqueado en Mutex'],
+                activeThread: null
+            }
+        ];
+
+        // --- STATE VARIABLES ---
+        let currentStep = 0;
+        let currentTab = 'cargo';
+        let autoplayInterval = null;
+
+        // --- DOM ELEMENTS ---
+        const codeContainer = document.getElementById('code-container');
+        const codeContent = document.getElementById('code-content');
+        const stepTitle = document.getElementById('step-title');
+        const stepBadge = document.getElementById('step-badge');
+        const teacherText = document.getElementById('teacher-text');
+        const syntaxText = document.getElementById('syntax-text');
+        const progressText = document.getElementById('progress-text');
+        const progressBar = document.getElementById('progress-bar');
+        const activeLineNum = document.getElementById('active-line-num');
+        const terminalContent = document.getElementById('terminal-content');
+        const browserUrl = document.getElementById('browser-url');
+        const browserViewport = document.getElementById('browser-viewport');
+        const threadsContainer = document.getElementById('threads-container');
+        const btnPrev = document.getElementById('btn-prev');
+        const btnNext = document.getElementById('btn-next');
+        const btnPlay = document.getElementById('btn-play');
+
+        // --- INIT APP ---
+        window.onload = () => {
+            renderStep();
+        };
+
+        // --- SWITCH CODE TABS ---
+        function switchTab(tab) {
+            currentTab = tab;
+            
+            // Update Tab Styling
+            ['lib', 'main', 'cargo'].forEach(t => {
+                const el = document.getElementById(`tab-${t}`);
+                if (t === tab) {
+                    el.className = "px-4 py-2 text-xs font-mono font-medium border-b-2 border-rust-500 text-rust-400 flex items-center gap-2";
+                } else {
+                    el.className = "px-4 py-2 text-xs font-mono font-medium border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2";
+                }
+            });
+
+            renderCode();
+        }
+
+        // --- RENDER CODE WITH ACTIVE LINE HIGHLIGHTING ---
+        function renderCode() {
+            const rawCode = codeFiles[currentTab];
+            const lines = rawCode.split('\n');
+            const step = steps[currentStep];
+
+            let html = '';
+            lines.forEach((lineText, index) => {
+                const lineNum = index + 1;
+                const isActive = (step.file === currentTab && step.line === lineNum);
+                const activeClass = isActive ? 'active' : '';
+
+                // Escape HTML characters
+                const escapedText = lineText
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;");
+
+                html += `<div class="code-line ${activeClass}" id="line-${lineNum}">
+                    <span class="inline-block w-8 text-slate-600 text-right pr-3 select-none font-sans text-[10px]">${lineNum}</span>
+                    <span class="text-slate-200">${escapedText}</span>
+                </div>`;
+            });
+
+            codeContent.innerHTML = html;
+
+            // Auto scroll to active line
+            if (step.file === currentTab && step.line) {
+                const activeEl = document.getElementById(`line-${step.line}`);
+                if (activeEl) {
+                    activeEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }
+        }
+
+        // --- RENDER CURRENT STEP DETAILS ---
+        function renderStep() {
+            const step = steps[currentStep];
+
+            // Switch to step file if needed
+            if (currentTab !== step.file) {
+                switchTab(step.file);
+            } else {
+                renderCode();
+            }
+
+            // Update Teacher Explanations
+            stepTitle.innerText = step.title;
+            stepBadge.innerText = step.badge;
+            teacherText.innerHTML = step.teacher;
+            syntaxText.innerHTML = step.syntax;
+
+            // Update Progress Bar & Info
+            const total = steps.length;
+            progressText.innerText = `Paso ${currentStep + 1} de ${total}`;
+            const pct = ((currentStep + 1) / total) * 100;
+            progressBar.style.width = `${pct}%`;
+            activeLineNum.innerText = step.line ? `Línea ${step.line}` : 'Global';
+
+            // Update Terminal Log
+            terminalContent.innerHTML = `<div class="text-slate-400 leading-relaxed font-mono whitespace-pre-line">${step.terminal}</div>`;
+
+            // Update Browser Preview
+            browserUrl.innerText = step.browserUrl;
+            browserViewport.innerHTML = step.browserContent;
+
+            // Update Threads Visualizer
+            renderThreads(step.threads, step.activeThread);
+
+            // Button States
+            btnPrev.disabled = currentStep === 0;
+            if (currentStep === total - 1) {
+                btnNext.innerHTML = 'Finalizado <i class="fa-solid fa-check ml-1"></i>';
+            } else {
+                btnNext.innerHTML = 'Siguiente <i class="fa-solid fa-chevron-right ml-1"></i>';
+            }
+        }
+
+        // --- RENDER THREAD POOL WORKERS ---
+        function renderThreads(threadStates, activeIdx) {
+            let html = '';
+            threadStates.forEach((state, i) => {
+                const isActive = (i === activeIdx);
+                const borderClass = isActive ? 'border-rust-500 bg-rust-950/30' : 'border-slate-800 bg-slate-950';
+                const pulseClass = isActive ? 'thread-pulse' : '';
+                const iconColor = isActive ? 'text-rust-400' : 'text-slate-600';
+
+                html += `
+                <div class="p-2 rounded-lg border ${borderClass} ${pulseClass} transition-all flex items-center justify-between">
+                    <div class="flex items-center space-x-2">
+                        <i class="fa-solid fa-gear ${iconColor} text-xs"></i>
+                        <span class="text-xs font-mono font-semibold text-slate-200">Worker ${i}</span>
+                    </div>
+                    <span class="text-[10px] font-mono px-2 py-0.5 rounded ${isActive ? 'bg-rust-600/30 text-rust-300 font-bold' : 'bg-slate-800 text-slate-400'}">
+                        ${state}
+                    </span>
+                </div>`;
+            });
+            threadsContainer.innerHTML = html;
+        }
+
+        // --- NAVIGATION CONTROLS ---
+        function nextStep() {
+            if (currentStep < steps.length - 1) {
+                currentStep++;
+                renderStep();
+            } else {
+                stopAutoplay();
+            }
+        }
+
+        function prevStep() {
+            if (currentStep > 0) {
+                currentStep--;
+                renderStep();
+            }
+        }
+
+        function resetSimulation() {
+            stopAutoplay();
+            currentStep = 0;
+            renderStep();
+        }
+
+        // --- AUTOPLAY TOGGLE ---
+        function toggleAutoplay() {
+            if (autoplayInterval) {
+                stopAutoplay();
+            } else {
+                document.getElementById('play-icon').className = 'fa-solid fa-pause text-rust-400';
+                document.getElementById('play-text').innerText = 'Pausar';
+                autoplayInterval = setInterval(() => {
+                    if (currentStep < steps.length - 1) {
+                        nextStep();
+                    } else {
+                        stopAutoplay();
+                    }
+                }, 4000);
+            }
+        }
+
+        function stopAutoplay() {
+            if (autoplayInterval) {
+                clearInterval(autoplayInterval);
+                autoplayInterval = null;
+            }
+            document.getElementById('play-icon').className = 'fa-solid fa-play text-rust-400';
+            document.getElementById('play-text').innerText = 'Auto';
+        }
+
+        // --- MODAL CONTROLS ---
+        function openGlossaryModal() {
+            document.getElementById('glossary-modal').classList.remove('hidden');
+        }
+
+        function closeGlossaryModal() {
+            document.getElementById('glossary-modal').classList.add('hidden');
+        }
+    </script>
+</body>
+</html>
